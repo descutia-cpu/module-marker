@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2a3a8c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Module Marker">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>Module Marker</title>
+<style>
+  :root{--paper:#fff;--pink:#efd6e3;--line:#2a3a8c;--dot:#7a6f86;--ink:#1c2350;
+        --defect:#e2553a;--check:#f2b233;--fixed:#2f9e62}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:#f4f4f7;color:var(--ink);display:flex;flex-direction:column}
+  header{background:#fff;border-bottom:1px solid #ddd;padding:calc(8px + env(safe-area-inset-top)) 10px 8px}
+  h1{font-size:17px;margin:0 0 6px}
+  .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  button,select{font:inherit;font-size:14px;padding:7px 11px;border:1px solid #ccd;border-radius:9px;background:#fff;color:var(--ink)}
+  .tool{display:flex;align-items:center;gap:6px}
+  .tool.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .sw{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .stats{font-size:12px;color:#666;margin-top:5px}
+  #wrap{flex:1;overflow:auto;background:var(--paper);-webkit-overflow-scrolling:touch}
+  #map{display:grid;width:max-content;border:2px solid var(--line);margin:8px}
+  .hd{display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--paper);color:var(--ink)}
+  .num{font-size:13px;padding:6px 0}
+  .let{font-size:15px}
+  .sq{padding:3px}
+  .blk{display:grid}
+  .m{height:15px;border:1px dotted var(--dot);display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--dot);cursor:pointer;user-select:none;-webkit-user-select:none;position:relative}
+  .m.on{color:#fff;font-weight:700;border-radius:7px;box-shadow:0 0 0 2px var(--ink);z-index:1}
+  .m.defect{background:var(--defect)} .m.check{background:var(--check)} .m.fixed{background:var(--fixed)}
+  .m.note::after{content:"";position:absolute;top:1px;right:1px;width:4px;height:4px;border-radius:50%;background:#3e63dd}
+  #sheet{position:fixed;inset:auto 0 0 0;max-height:60vh;background:#fff;border-top:1px solid #ccc;border-radius:14px 14px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.15);padding:12px 12px calc(12px + env(safe-area-inset-bottom));display:none;flex-direction:column;z-index:10}
+  #sheet.open{display:flex}
+  #list{overflow:auto;font-size:14px;margin-top:8px}
+  #list div{display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #eee}
+  dialog{border:none;border-radius:12px;padding:16px;width:min(360px,92vw)}
+  textarea{width:100%;height:80px;font:inherit;padding:8px;border:1px solid #ccd;border-radius:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="row" style="justify-content:space-between"><h1>Module Marker</h1>
+    <div class="row"><select id="mapSel"></select><button id="mapMenu">⋯</button></div></div>
+  <div class="row" id="tools"></div>
+  <div class="row" style="margin-top:6px"><button id="listBtn">Marked list</button><span class="stats" id="stats"></span></div>
+</header>
+<div id="wrap"><div id="map"></div></div>
+
+<div id="sheet">
+  <div class="row" style="justify-content:space-between"><b id="sheetTitle">Marked modules</b><button id="closeSheet">Close</button></div>
+  <div class="row" style="margin-top:8px"><button id="share">Share / copy list</button><button id="csv">Export CSV</button><button id="backup">Backup</button><button id="restoreBtn">Restore</button><input type="file" id="restore" accept=".json" hidden></div>
+  <div id="list"></div>
+</div>
+
+<dialog id="noteDlg">
+  <b id="noteTitle"></b>
+  <p style="margin:8px 0 4px;font-size:13px;color:#666">Note for this module</p>
+  <textarea id="noteText"></textarea>
+  <div class="row" style="margin-top:10px;justify-content:flex-end"><button id="noteCancel">Cancel</button><button id="noteSave" style="background:var(--ink);color:#fff">Save</button></div>
+</dialog>
+
+<script>
+const LETTERS=[["A",3],["B",5],["C",3],["D",5],["E",4],["F",5],["G",4],["H",5],["I",4],["J",5]];
+const ACROSS=3, N=56, MW=16;
+const TYPES={defect:"Defect",check:"Check",fixed:"Fixed"};
+const KEY="moduleMarker.pwa.v1";
+let db=JSON.parse(localStorage.getItem(KEY)||"null")||{current:"Map 1",maps:{"Map 1":{}}};
+let tool="defect";
+const save=()=>localStorage.setItem(KEY,JSON.stringify(db));
+const map=()=>db.maps[db.current];
+const today=()=>new Date().toISOString().slice(0,10);
+const pink=(li,n)=>(Math.floor(li/2)+Math.floor((n-1)/14))%2===0;
+const TH="2px solid var(--line)", TN="1px solid var(--line)";
+
+function renderTools(){
+  const t=document.getElementById("tools");t.innerHTML="";
+  [["defect","var(--defect)"],["check","var(--check)"],["fixed","var(--fixed)"],["erase","#999"],["note","#3e63dd"]].forEach(([k,c])=>{
+    const b=document.createElement("button");b.className="tool"+(k===tool?" active":"");
+    b.innerHTML=`<span class="sw" style="background:${c}"></span>${TYPES[k]||(k==="erase"?"Erase":"Note")}`;
+    b.onclick=()=>{tool=k;renderTools()};t.appendChild(b);
+  });
+}
+function renderMaps(){const s=document.getElementById("mapSel");s.innerHTML="";Object.keys(db.maps).forEach(n=>{const o=new Option(n,n);o.selected=n===db.current;s.add(o)})}
+
+function buildMap(){
+  const el=document.getElementById("map");
+  el.style.gridTemplateColumns=`30px repeat(${N}, ${ACROSS*MW+6}px) 30px`;
+  let h="";
+  const numRow=top=>{const b=top?"border-bottom":"border-top";let s=`<div class="hd" style="${b}:${TH}"></div>`;
+    for(let n=1;n<=N;n++)s+=`<div class="hd num" style="border-left:${(n-1)%14===0?TH:TN};${b}:${TH}">${n}</div>`;
+    return s+`<div class="hd" style="border-left:${TH};${b}:${TH}"></div>`;};
+  h+=numRow(true);
+  LETTERS.forEach(([r,w],li)=>{
+    const bt=li%2===0&&li>0?TH:TN;
+    h+=`<div class="hd let" style="border-top:${bt}">${r}</div>`;
+    for(let n=1;n<=N;n++){
+      h+=`<div class="sq" style="border-left:${(n-1)%14===0?TH:TN};border-top:${bt};background:${pink(li,n)?"var(--pink)":"var(--paper)"}"><div class="blk" style="grid-template-columns:repeat(${ACROSS},${MW}px)">`;
+      for(let k=1;k<=w*ACROSS;k++)h+=`<div class="m" data-id="${r}${n}-${k}">${k}</div>`;
+      h+=`</div></div>`;
+    }
+    h+=`<div class="hd let" style="border-left:${TH};border-top:${bt}">${r}</div>`;
+  });
+  h+=numRow(false);
+  el.innerHTML=h;
+}
+function paint(){
+  const m=map();
+  document.querySelectorAll(".m").forEach(d=>{const e=m[d.dataset.id];
+    d.className="m"+(e&&e.type?" on "+e.type:"")+(e&&e.note?" note":"");});
+  const ids=Object.keys(m);const c={defect:0,check:0,fixed:0};ids.forEach(i=>{if(c[m[i].type]!==undefined)c[m[i].type]++});
+  document.getElementById("stats").textContent=`${c.defect} defect · ${c.check} check · ${c.fixed} fixed`;
+  renderList();
+}
+const parse=id=>{const x=id.match(/^([A-J])(\d+)-(\d+)$/);return [x[1],+x[2],+x[3]]};
+const sorted=()=>Object.keys(map()).sort((a,b)=>{const x=parse(a),y=parse(b);return x[0]!==y[0]?x[0].localeCompare(y[0]):x[1]!==y[1]?x[1]-y[1]:x[2]-y[2]});
+const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function renderList(){
+  const m=map(),ids=sorted();
+  document.getElementById("sheetTitle").textContent=`${db.current}: ${ids.length} marked`;
+  document.getElementById("list").innerHTML=ids.length?ids.map(i=>{const e=m[i];
+    return `<div><span class="sw" style="background:var(--${e.type||"line"})"></span><b style="min-width:62px">${i}</b><span style="min-width:52px">${TYPES[e.type]||"Note"}</span><span style="color:#888">${e.date||""}</span><span>${e.note?esc(e.note):""}</span></div>`}).join(""):'<div style="color:#888">Nothing marked yet.</div>';
+}
+function listText(){const m=map();return `${db.current}\n`+sorted().map(i=>`${i}  ${TYPES[m[i].type]||"Note"}  ${m[i].date||""}${m[i].note?"  "+m[i].note:""}`).join("\n")}
+
+document.getElementById("map").addEventListener("click",e=>{
+  const d=e.target.closest(".m");if(!d)return;const id=d.dataset.id,m=map();
+  if(tool==="note"){openNote(id);return}
+  if(tool==="erase")delete m[id];
+  else if(m[id]&&m[id].type===tool){if(m[id].note)delete m[id].type;else delete m[id]}
+  else m[id]={...(m[id]||{}),type:tool,date:today()};
+  save();paint();
+});
+let noteId=null;
+function openNote(id){noteId=id;const e=map()[id];document.getElementById("noteTitle").textContent="Module "+id;document.getElementById("noteText").value=e&&e.note||"";document.getElementById("noteDlg").showModal()}
+document.getElementById("noteCancel").onclick=()=>document.getElementById("noteDlg").close();
+document.getElementById("noteSave").onclick=()=>{const m=map(),t=document.getElementById("noteText").value.trim();
+  if(t)m[noteId]={...(m[noteId]||{date:today()}),note:t};else if(m[noteId]){delete m[noteId].note;if(!m[noteId].type)delete m[noteId]}
+  save();paint();document.getElementById("noteDlg").close()};
+
+document.getElementById("listBtn").onclick=()=>document.getElementById("sheet").classList.add("open");
+document.getElementById("closeSheet").onclick=()=>document.getElementById("sheet").classList.remove("open");
+document.getElementById("mapSel").onchange=e=>{db.current=e.target.value;save();paint()};
+document.getElementById("mapMenu").onclick=()=>{
+  const c=prompt("Type: new, rename, delete, or clear","new");if(!c)return;const a=c.trim().toLowerCase();
+  if(a==="new"){const n=prompt("Name for the new map:","Map "+(Object.keys(db.maps).length+1));if(!n||db.maps[n])return;db.maps[n]={};db.current=n}
+  else if(a==="rename"){const n=prompt("New name:",db.current);if(!n||db.maps[n])return;db.maps[n]=db.maps[db.current];delete db.maps[db.current];db.current=n}
+  else if(a==="delete"){if(Object.keys(db.maps).length<2)return alert("You need at least one map.");if(!confirm(`Delete "${db.current}"?`))return;delete db.maps[db.current];db.current=Object.keys(db.maps)[0]}
+  else if(a==="clear"){if(!confirm(`Clear all marks on "${db.current}"?`))return;db.maps[db.current]={}}
+  save();renderMaps();paint();
+};
+function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()}
+document.getElementById("share").onclick=async()=>{const t=listText();
+  if(navigator.share){try{await navigator.share({title:"Module Marker",text:t});return}catch(e){}}
+  try{await navigator.clipboard.writeText(t);alert("List copied.")}catch(e){prompt("Copy this list:",t)}};
+document.getElementById("csv").onclick=()=>{const m=map(),rows=[["Map","Module","Letter","Number","Module #","Status","Date","Note"]];
+  sorted().forEach(i=>{const p=parse(i);rows.push([db.current,i,p[0],p[1],p[2],TYPES[m[i].type]||"Note",m[i].date||"",m[i].note||""])});
+  download(`${db.current}.csv`,rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n"),"text/csv")};
+document.getElementById("backup").onclick=()=>download(`module-marker-backup-${today()}.json`,JSON.stringify(db),"application/json");
+document.getElementById("restoreBtn").onclick=()=>document.getElementById("restore").click();
+document.getElementById("restore").onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!d.maps)throw 0;db=d;save();renderMaps();paint();alert("Backup restored.")}catch(x){alert("That isn't a Module Marker backup.")}})};
+
+renderTools();renderMaps();buildMap();paint();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
